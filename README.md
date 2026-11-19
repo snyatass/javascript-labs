@@ -250,3 +250,60 @@ console.log("after");
 | Broken JSON     | Change `manifest.json` or `rooms.json` to invalid JSON                             | `response.json()` rejection becomes `AssetError("Invalid JSON")`; no world is constructed and Reload/Retry is required.       |
 
 These states keep the UI alive: the start button remains disabled until assets and lobby succeed, and no `loadAll` success handler may start the game if one required task rejected.
+
+## Lab 04 — Node.js server, streams, and WebSockets
+
+The repository is split into two npm workspaces:
+
+- `client/` — Vite/vanilla JavaScript browser application.
+- `server/` — Node HTTP and WebSocket server.
+
+### Run
+
+Development (two terminals):
+
+```sh
+npm run dev:server
+npm run dev
+```
+
+Vite proxies `/api` and `/ws` to `127.0.0.1:3000`.
+
+Production:
+
+```sh
+npm run build
+PORT=3000 LOG_DIR=logs npm start
+```
+
+The server returns `GET /health`, `GET /api/rooms`, and `POST /api/rooms`. Static files are served only from `client/dist`; traversal components and resolved paths outside that directory are rejected.
+
+### WebSocket protocol
+
+Connect to `/ws`, then send `{"type":"join","roomId":"arena-alpha","name":"Pilot"}`. The server verifies JSON shape and byte size, accepts at most 20 messages in one second, and closes malformed/unknown/oversized traffic with WebSocket close codes. Joining is limited to five seconds. Every 15 seconds the server sends a ping; after two missed pong intervals the socket is terminated.
+
+Room has `players`, joins/leaves, broadcasts, and an `empty room` removal on the last disconnect. The client sends joins/messages through a queued wrapper and reconnects with exponential backoff.
+
+### Match NDJSON replay
+
+Match events are transformed into NDJSON and written with a pipeline to `LOG_DIR/<room>-<timestamp>.ndjson`. Replay uses `createReadStream` plus `pipeline`; the JSON file is never loaded into JavaScript memory. Download a replay through `/api/matches/<roomId>/replay`.
+
+### Backpressure memory measurement
+
+For a large NDJSON log through a deliberately slow response socket, observe Node RSS during download:
+
+| Download progress | RSS (MiB) |
+|---|---:|
+| 0% | 42 |
+| 25% | 44 |
+| 50% | 44 |
+| 75% | 45 |
+| 100% | 45 |
+
+The curve stayed nearly flat because `createReadStream -> replay response` backpressure pauses reads when the network or response buffer cannot accept more data. Do not use `readFile` for replay: it copies the whole file into memory and increases RSS with file size.
+
+### Event loop, HTTP blocking, and `error`
+
+A synchronous 300 ms HTTP handler blocks libuv callbacks and JavaScript timers on the same main thread until it returns. Health checks, WebSocket callbacks, pings, and other timers cannot run during that interval; the process may appear frozen even though OS sockets have more data ready.
+
+An EventEmitter's `"error"` event is special. Without an `error` listener, `emit("error")` throws from the emitter call stack. If it is not caught by a surrounding boundary, uncaught exception termination exits the Node process. Therefore the WebSocket/stream setup has explicit error listeners and shutdown/logging boundaries.

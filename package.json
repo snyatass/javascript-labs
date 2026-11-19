@@ -1,13 +1,18 @@
 {
-  "name": "spaceship-lab-01-to-03",
+  "name": "spaceship-labs",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "test": "node --test",
-    "check": "biome check ."
+    "dev": "npm run dev -w client",
+    "dev:server": "npm run dev -w server",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server",
+    "test": "node --test client/tests",
+    "check": "biome check client/src client/tests server/src server/tests client/vite.config.js"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",

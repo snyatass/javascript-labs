@@ -1,5 +1,6 @@
 import { fetchJson, loadAllSettled, loadAudio, loadImage, retry } from "./assets.js";
 import { GameAudio } from "./audio.js";
+import { setupChat } from "./chat-dom.js";
 import { emitGameEvent } from "./events.js";
 import { createInput } from "./input.js";
 import { Lobby } from "./lobby.js";
@@ -8,6 +9,7 @@ import { createLoop } from "./loop.js";
 import { setupCanvas } from "./render/canvas.js";
 import { drawEntity, drawGrid, drawHud } from "./render/draw.js";
 import { Game } from "./sim/game.js";
+import { ResilientSocket } from "./socket.js";
 
 const canvas = document.getElementById("game");
 const { ctx, size } = setupCanvas(canvas);
@@ -21,6 +23,7 @@ let game = null;
 let loop = null;
 let sprites = null;
 let assetsReady = false;
+let chatSocket = null;
 
 function drawLoading(progress, message) {
   ctx.clearRect(0, 0, size.width, size.height);
@@ -113,6 +116,19 @@ lobby.addEventListener("joined", async (event) => {
   const room = event.detail.room;
   game = new Game({ width: room.width, height: room.height });
   lobbyUi.hide();
+
+  chatSocket = new ResilientSocket(
+    `${location.protocol === "https:" ? "wss://" : "ws://"}${location.host}/ws`,
+  );
+  chatSocket.connect();
+  chatSocket.addEventListener("open", () => {
+    chatSocket.send({ type: "join", roomId: room.id, name: event.detail.playerName });
+  });
+  chatSocket.addEventListener("message", (socketEvent) => {
+    const message = socketEvent.detail;
+    if (message.type === "joined") game.message = `Joined ${message.room.name}`;
+  });
+  setupChat(chatSocket);
 
   window.addEventListener("keydown", (keyEvent) => {
     if (keyEvent.code !== "Space" || keyEvent.repeat) return;

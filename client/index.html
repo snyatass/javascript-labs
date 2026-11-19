@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Spaceship — Labs 01–03</title>
+    <title>Spaceship — Labs 01–04</title>
     <style>
       html, body {
         margin: 0;
@@ -52,6 +52,27 @@
       #lobby button { border: 0; background: #4cc9f0; color: #07111a; cursor: pointer; }
       #lobby button:disabled { opacity: 0.5; cursor: wait; }
       #lobby-status { min-height: 20px; margin-top: 12px; color: #94a3b8; }
+      #chat {
+        position: fixed;
+        right: 12px;
+        bottom: 12px;
+        z-index: 3;
+        width: min(300px, calc(100vw - 24px));
+        color: #e2e8f0;
+        font: 12px monospace;
+      }
+      #chat.hidden { display: none; }
+      #chat-log {
+        max-height: 180px;
+        margin-bottom: 6px;
+        overflow-y: auto;
+        border-radius: 6px;
+        background: rgba(11, 14, 20, 0.78);
+        padding: 8px;
+      }
+      #chat-form { display: flex; gap: 6px; }
+      #chat-input { flex: 1; min-width: 0; padding: 8px; }
+      #chat-send { padding: 8px 12px; }
     </style>
   </head>
   <body>
@@ -71,6 +92,13 @@
         <button id="join-button" type="button" disabled>Join</button>
       </div>
     </section>
+    <aside id="chat" class="hidden" aria-label="Room chat">
+      <div id="chat-log"></div>
+      <form id="chat-form">
+        <input id="chat-input" maxlength="500" aria-label="Chat message" autocomplete="off" />
+        <button id="chat-send" type="submit">Send</button>
+      </form>
+    </aside>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
