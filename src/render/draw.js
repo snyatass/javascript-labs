@@ -77,7 +77,7 @@ export function drawShip(ctx, ship) {
   ctx.restore();
 }
 
-export function drawEntity(ctx, entity, alpha, width, height) {
+export function drawEntity(ctx, entity, alpha, width, height, sprites = null) {
   if (entity.kind === "explosion") {
     drawExplosion(ctx, entity);
     return;
@@ -102,17 +102,46 @@ export function drawEntity(ctx, entity, alpha, width, height) {
   );
 
   if (entity.kind === "ship") {
-    drawShip(ctx, {
-      ...position,
-      color: entity.team === "player" ? "#4cc9f0" : "#ff5d73",
-    });
+    if (sprites) drawSpriteShip(ctx, sprites, position);
+    else drawShip(ctx, { ...position, color: entity.team === "player" ? "#4cc9f0" : "#ff5d73" });
   } else if (entity.kind === "asteroid") {
-    drawAsteroid(ctx, entity, position);
+    if (sprites) drawSpriteAsteroid(ctx, sprites, entity, position);
+    else drawAsteroid(ctx, entity, position);
   } else if (entity.kind === "bullet") {
-    drawBullet(ctx, entity, position);
+    if (sprites) drawSpriteBullet(ctx, sprites, entity, position);
+    else drawBullet(ctx, entity, position);
   } else if (entity.kind === "pickup") {
-    drawPickup(ctx, entity, position);
+    if (sprites) drawSpritePickup(ctx, sprites, position);
+    else drawPickup(ctx, entity, position);
   }
+}
+
+function drawSprite(ctx, sprites, sourceX, position, sourceWidth = 64, sourceHeight = 64) {
+  ctx.save();
+  ctx.translate(position.x, position.y);
+  ctx.rotate(position.angle ?? 0);
+  ctx.drawImage(sprites, sourceX, 0, sourceWidth, sourceHeight, -32, -32, 64, 64);
+  ctx.restore();
+}
+
+function drawSpriteShip(ctx, sprites, position) {
+  drawSprite(ctx, sprites, 0, position);
+}
+
+function drawSpriteAsteroid(ctx, sprites, _asteroid, position) {
+  ctx.save();
+  ctx.translate(position.x, position.y);
+  ctx.rotate(position.angle);
+  ctx.drawImage(sprites, 64, 0, 64, 64, -32, -32, 64, 64);
+  ctx.restore();
+}
+
+function drawSpriteBullet(ctx, sprites, bullet, position) {
+  drawSprite(ctx, sprites, 128, { ...position, angle: bullet.angle });
+}
+
+function drawSpritePickup(ctx, sprites, position) {
+  drawSprite(ctx, sprites, 192, position);
 }
 
 function drawAsteroid(ctx, asteroid, position) {

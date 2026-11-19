@@ -1,0 +1,5 @@
+[
+  { "id": "arena-alpha", "name": "Arena Alpha", "width": 800, "height": 600, "players": 3 },
+  { "id": "arena-beta", "name": "Arena Beta", "width": 1000, "height": 700, "players": 1 },
+  { "id": "small-orbit", "name": "Small Orbit", "width": 640, "height": 480, "players": 5 }
+]

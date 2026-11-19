@@ -1,0 +1,9 @@
+{
+  "images": [{ "key": "sprites", "url": "/assets/sprites.svg" }],
+  "audio": [
+    { "key": "fire", "url": "/assets/fire.wav" },
+    { "key": "hit", "url": "/assets/hit.wav" },
+    { "key": "explosion", "url": "/assets/explosion.wav" }
+  ],
+  "json": [{ "key": "rooms", "url": "/rooms.json" }]
+}

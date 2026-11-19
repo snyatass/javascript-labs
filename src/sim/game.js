@@ -9,6 +9,7 @@ export class Game {
   #respawnTimer = 0;
   #pickupTimer = 0;
   #random;
+  events = [];
 
   constructor(bounds, { random = Math.random, asteroidCount = 7, spawnEnemy = true } = {}) {
     this.world = new World(bounds);
@@ -77,7 +78,8 @@ export class Game {
       if (this.messageTime === 0) this.message = "";
     }
 
-    for (const event of this.world.consumeEvents()) {
+    this.events = this.world.consumeEvents();
+    for (const event of this.events) {
       if (event.type === "entity-destroyed") {
         if (event.kind === "asteroid" && event.killerTeam === "player") this.score += 100;
         if (event.kind === "ship" && event.killerTeam === "player") this.score += 250;

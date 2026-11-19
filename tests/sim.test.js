@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { interpolateShip } from "../src/render/draw.js";
+import { wrapVector } from "../src/sim/arena.js";
 import { Asteroid } from "../src/sim/asteroid.js";
 import { Bullet } from "../src/sim/bullet.js";
 import { Entity } from "../src/sim/entity.js";
@@ -25,6 +27,21 @@ test("Vector2 operations return new vectors and preserve their operands", () => 
   assert.ok(Math.abs(vector.rotate(Math.PI / 2).x + 4) < 1e-10);
   assert.equal(vector.dot(other), -5);
   assert.deepEqual(vector, new Vector2(3, 4));
+});
+
+test("wrap and interpolation keep entities and bullets at arena boundaries", () => {
+  const wrapped = wrapVector(new Vector2(801, -1), 800, 600);
+  assert.deepEqual(wrapped, new Vector2(1, 599));
+
+  const interpolated = interpolateShip(
+    { x: 799, y: 300, angle: 0, thrust: false },
+    { x: 1, y: 300, angle: 0, thrust: false },
+    0.5,
+    800,
+    600,
+  );
+  assert.ok(interpolated.x >= 0 && interpolated.x < 800);
+  assert.equal(interpolated.x, 0);
 });
 
 test("Ship extends Entity and updates its movement at a fixed timestep", () => {

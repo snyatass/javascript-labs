@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="64" viewBox="0 0 256 64" role="img" aria-labelledby="title">
+  <title id="title">Spaceship sprite sheet</title>
+  <g transform="translate(32 32)">
+    <path d="M28 0 L-20-16 L-12 0 L-20 16 Z" fill="#4cc9f0" stroke="#fff" stroke-width="2"/>
+  </g>
+  <g transform="translate(96 32)">
+    <path d="M0-21 L17-10 L21 4 L12 19 L-5 21 L-20 11 L-21-6 L-10-18 Z" fill="#303849" stroke="#91a0b7" stroke-width="3"/>
+  </g>
+  <g transform="translate(160 32)">
+    <circle r="7" fill="#ffe66d" stroke="#fff" stroke-width="2"/>
+  </g>
+  <g transform="translate(224 32)">
+    <circle r="17" fill="#62e6a7" fill-opacity=".14" stroke="#62e6a7" stroke-width="3"/>
+    <text x="0" y="5" fill="#fff" text-anchor="middle" font-size="18" font-family="monospace" font-weight="bold">S</text>
+  </g>
+</svg>

@@ -51,6 +51,12 @@ function resolveBulletHit(world, bullet, target) {
 
   world.despawn(bullet.id);
   const accepted = target.takeDamage(bullet.damage);
+  world.emit({
+    type: "entity-hit",
+    entityId: target.id,
+    kind: target.kind,
+    killerTeam: bullet.ownerTeam,
+  });
   if (!accepted || target.alive) return;
 
   world.spawn(new Explosion(target.pos));
@@ -67,6 +73,7 @@ function damageShip(world, ship, damage, attackerId, attackerTeam) {
   const accepted = ship.takeDamage(damage);
   if (!accepted) return;
 
+  world.emit({ type: "entity-hit", entityId: ship.id, kind: ship.kind, killerTeam: attackerTeam });
   if (!ship.alive) {
     world.spawn(new Explosion(ship.pos));
     world.emit({
