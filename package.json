@@ -11,16 +11,27 @@
     "dev:server": "npm run dev -w server",
     "build": "npm run build -w client",
     "start": "npm run start -w server",
-    "test": "node --test client/tests shared/*.test.ts",
+    "test": "vitest run && npm run test -w server",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "load": "tsx scripts/load-clients.ts",
+    "bots": "tsx scripts/bots.ts",
+    "bench:frame": "tsx scripts/frame-benchmark.ts",
     "typecheck": "tsc -b",
     "check": "npm run typecheck && biome check client/src client/tests server/src server/tests shared/protocol.ts shared/sim.ts shared/messages.ts shared/protocol.test.ts client/vite.config.js"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.1",
+    "fast-check": "^4.10.3",
     "gifenc": "^1.0.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.8"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1",
+    "wait-on": "^9.5.1"
   },
   "dependencies": {
     "zod": "^4.6.7"

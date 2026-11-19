@@ -158,7 +158,7 @@ wss.on("connection", (socket) => {
     const now = Date.now();
     socket.messages = socket.messages.filter((timestamp) => now - timestamp < 1000);
     socket.messages.push(now);
-    if (socket.messages.length > 20) {
+    if (socket.messages.length > 40) {
       socket.close(1008, "Rate limit");
       return;
     }
@@ -270,7 +270,7 @@ wss.on("connection", (socket) => {
       realtimeWorlds.delete(roomId);
       realtimeInputs.delete(roomId);
       void logs.get(room.id)?.close();
-      rooms.delete(room.id);
+      if (room.id.startsWith("room-")) rooms.delete(room.id);
     }
   });
 });

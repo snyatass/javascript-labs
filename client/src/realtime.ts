@@ -66,6 +66,15 @@ export class RealtimeClient {
   readonly protocol: "json" | "binary";
   lastSnapshotAt = 0;
   correction = 0;
+  private lastInputAt = 0;
+  private serverTargetX = 0;
+  private serverTargetY = 0;
+  private serverTargetAngle = 0;
+  private correctionActive = false;
+  private readonly renderShips = new Map<
+    EntityId,
+    { x: number; y: number; angle: number; lastAt: number }
+  >();
 
   constructor(socket: SocketLike, bounds: { width: number; height: number }) {
     this.socket = socket;
@@ -154,19 +163,33 @@ export class RealtimeClient {
         this.world.ships.set(id, local);
       }
       if (id === this.localId) {
-        this.correction = Math.hypot(snapshotShip.x - local.x, snapshotShip.y - local.y);
+        const correctedX = nearestWrappedCoordinate(local.x, snapshotShip.x, this.world.width);
+        const correctedY = nearestWrappedCoordinate(local.y, snapshotShip.y, this.world.height);
+        this.correction = Math.hypot(correctedX - local.x, correctedY - local.y);
+        this.serverTargetX = correctedX;
+        this.serverTargetY = correctedY;
+        this.serverTargetAngle = snapshotShip.angle;
+        if (this.correction > 12) {
+          this.correctionActive = true;
+          Object.assign(local, { ...snapshotShip, x: correctedX, y: correctedY });
+        }
+      } else {
+        const correctedX = nearestWrappedCoordinate(local.x, snapshotShip.x, this.world.width);
+        const correctedY = nearestWrappedCoordinate(local.y, snapshotShip.y, this.world.height);
+        Object.assign(local, { ...snapshotShip, x: correctedX, y: correctedY });
       }
-      Object.assign(local, snapshotShip);
     }
-
-    this.world.bullets = bullets.map((bullet) => ({
-      owner: bullet.owner as EntityId,
-      x: bullet.x,
-      y: bullet.y,
-      vx: bullet.vx,
-      vy: bullet.vy,
-      ttl: 2,
-    }));
+    this.world.bullets = bullets.map((bullet, index) => {
+      const previous = this.world.bullets[index];
+      return {
+        owner: bullet.owner as EntityId,
+        x: previous ? nearestWrappedCoordinate(previous.x, bullet.x, this.world.width) : bullet.x,
+        y: previous ? nearestWrappedCoordinate(previous.y, bullet.y, this.world.height) : bullet.y,
+        vx: bullet.vx,
+        vy: bullet.vy,
+        ttl: 2,
+      };
+    });
 
     if (this.localId) {
       const inputs = new Map<EntityId, NetInput>();
@@ -179,6 +202,11 @@ export class RealtimeClient {
 
   sampleInput(input: InputLike): void {
     if (!this.localId) return;
+    const now = performance.now();
+    if (now - this.lastInputAt < 1000 / 30) {
+      return;
+    }
+    this.lastInputAt = now;
     this.seq++;
     const flags: NetInput = {
       seq: sequence(this.seq),
@@ -229,6 +257,41 @@ export class RealtimeClient {
 
   getInterpolatedShip(id: EntityId, now: number): NetShip | undefined {
     const local = this.world.ships.get(id);
+    if (id === this.localId && local) {
+      let render = this.renderShips.get(id);
+      if (!render) {
+        render = { x: local.x, y: local.y, angle: local.angle, lastAt: now };
+        this.renderShips.set(id, render);
+      }
+
+      const dt = Math.min(0.05, Math.max(0.001, (now - render.lastAt) / 1000));
+      render.lastAt = now;
+      const alpha = 1 - Math.exp(-dt * 18);
+
+      if (this.correctionActive) {
+        const targetX = nearestWrappedCoordinate(local.x, this.serverTargetX, this.world.width);
+        const targetY = nearestWrappedCoordinate(local.y, this.serverTargetY, this.world.height);
+        const correctedX = lerpWrapped(render.x, targetX, alpha, this.world.width);
+        const correctedY = lerpWrapped(render.y, targetY, alpha, this.world.height);
+        render.x = correctedX;
+        render.y = correctedY;
+        render.angle = lerpAngle(render.angle, this.serverTargetAngle, alpha);
+        if (Math.hypot(targetX - correctedX, targetY - correctedY) < 0.5) {
+          this.correctionActive = false;
+          this.correction = 0;
+        }
+      } else {
+        render.x = lerpWrapped(render.x, local.x, alpha, this.world.width);
+        render.y = lerpWrapped(render.y, local.y, alpha, this.world.height);
+        render.angle = lerpAngle(render.angle, local.angle, alpha);
+      }
+      return {
+        ...local,
+        x: render.x,
+        y: render.y,
+        angle: render.angle,
+      };
+    }
     if (id !== this.localId && this.snapshots.length >= 2) {
       const target = now - 100;
       let older = this.snapshots[0];
@@ -247,12 +310,14 @@ export class RealtimeClient {
       if (oldShip && newShip) {
         const span = Math.max(1, newer.receivedAt - older.receivedAt);
         const alpha = Math.max(0, Math.min(1, (target - older.receivedAt) / span));
+        const x = lerpWrapped(oldShip.x, newShip.x, alpha, this.world.width);
+        const y = lerpWrapped(oldShip.y, newShip.y, alpha, this.world.height);
         return {
           id,
           name: "Remote",
-          x: oldShip.x + (newShip.x - oldShip.x) * alpha,
-          y: oldShip.y + (newShip.y - oldShip.y) * alpha,
-          angle: newShip.angle,
+          x,
+          y,
+          angle: lerpAngle(oldShip.angle, newShip.angle, alpha),
           vx: newShip.vx,
           vy: newShip.vy,
           hp: newShip.hp,
@@ -276,4 +341,25 @@ function isJsonSnapshot(value: unknown): value is JsonSnapshot {
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled snapshot entity: ${String(value)}`);
+}
+
+export function nearestWrappedCoordinate(current: number, target: number, extent: number): number {
+  if (extent <= 0) return target;
+  let delta = target - current;
+  if (delta > extent / 2) delta -= extent;
+  if (delta < -extent / 2) delta += extent;
+  return current + delta;
+}
+
+function lerpWrapped(a: number, b: number, alpha: number, extent: number): number {
+  if (extent <= 0) return a + (b - a) * alpha;
+  const nearestB = nearestWrappedCoordinate(a, b, extent);
+  const result = a + (nearestB - a) * alpha;
+  return ((result % extent) + extent) % extent;
+}
+
+export function lerpAngle(a: number, b: number, alpha: number): number {
+  let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return a + diff * alpha;
 }

@@ -1,3 +1,4 @@
+import { ObjectPool } from "./pool.ts";
 import {
   type EntityId,
   type NetBullet,
@@ -5,6 +6,7 @@ import {
   type NetShip,
   sequence,
 } from "./protocol.ts";
+import { SpatialHash } from "./spatial-hash.ts";
 
 export interface NetWorld {
   width: number;
@@ -14,6 +16,8 @@ export interface NetWorld {
   bullets: NetBullet[];
   ships: Map<EntityId, NetShip>;
   random: () => number;
+  bulletPool: ObjectPool<NetBullet>;
+  shipHash: SpatialHash<NetShip>;
 }
 
 export function mulberry32(seed: number): () => number {
@@ -36,7 +40,7 @@ export function createNetWorld({
   height?: number;
   seed?: number;
 } = {}): NetWorld {
-  return {
+  const world: NetWorld = {
     width,
     height,
     seed,
@@ -44,7 +48,10 @@ export function createNetWorld({
     tick: 0,
     bullets: [],
     ships: new Map(),
+    bulletPool: createBulletPool(),
+    shipHash: new SpatialHash<NetShip>(64),
   };
+  return world;
 }
 
 export function addNetShip(world: NetWorld, id: EntityId, name = "Pilot"): NetShip {
@@ -102,22 +109,26 @@ export function stepNetWorld(
 
     if (input.fire && ship.cooldown === 0) {
       ship.cooldown = 0.25;
-      world.bullets.push({
-        owner: id,
-        x: ship.x + Math.cos(ship.angle) * 18,
-        y: ship.y + Math.sin(ship.angle) * 18,
-        vx: ship.vx + Math.cos(ship.angle) * 520,
-        vy: ship.vy + Math.sin(ship.angle) * 520,
-        ttl: 2,
-      });
+      const bullet = world.bulletPool.acquire();
+      bullet.owner = id;
+      bullet.x = ship.x + Math.cos(ship.angle) * 18;
+      bullet.y = ship.y + Math.sin(ship.angle) * 18;
+      bullet.vx = ship.vx + Math.cos(ship.angle) * 520;
+      bullet.vy = ship.vy + Math.sin(ship.angle) * 520;
+      bullet.ttl = 2;
+      world.bullets.push(bullet);
     }
   }
 
+  world.shipHash.clear();
+  for (const ship of world.ships.values()) {
+    world.shipHash.insert(ship.x, ship.y, ship);
+  }
   for (const bullet of world.bullets) {
     bullet.x = wrapCoordinate(bullet.x + bullet.vx * dt, world.width);
     bullet.y = wrapCoordinate(bullet.y + bullet.vy * dt, world.height);
     bullet.ttl -= dt;
-    for (const ship of world.ships.values()) {
+    for (const ship of world.shipHash.nearby(bullet.x, bullet.y)) {
       if (ship.id === bullet.owner) continue;
       if (Math.hypot(ship.x - bullet.x, ship.y - bullet.y) < 18) {
         bullet.ttl = 0;
@@ -125,7 +136,12 @@ export function stepNetWorld(
       }
     }
   }
-  world.bullets = world.bullets.filter((bullet) => bullet.ttl > 0);
+  const alive: NetBullet[] = [];
+  for (const bullet of world.bullets) {
+    if (bullet.ttl > 0) alive.push(bullet);
+    else world.bulletPool.release(bullet);
+  }
+  world.bullets = alive;
   return world;
 }
 
@@ -135,4 +151,25 @@ function wrapCoordinate(value: number, extent: number): number {
 
 function sequenceZero(): NetInput["seq"] {
   return sequence(0);
+}
+
+function createBulletPool(): ObjectPool<NetBullet> {
+  return new ObjectPool(
+    () => ({
+      owner: 0 as EntityId,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      ttl: 0,
+    }),
+    (bullet) => {
+      bullet.owner = 0 as EntityId;
+      bullet.x = 0;
+      bullet.y = 0;
+      bullet.vx = 0;
+      bullet.vy = 0;
+      bullet.ttl = 0;
+    },
+  );
 }

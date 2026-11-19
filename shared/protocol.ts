@@ -217,7 +217,7 @@ export interface NetShip {
 }
 
 export interface NetBullet {
-  readonly owner: EntityId;
+  owner: EntityId;
   x: number;
   y: number;
   vx: number;

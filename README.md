@@ -1,4 +1,6 @@
-# Spaceship — Labs 01–03
+# Spaceship — Labs 01–07
+
+[![CI](https://github.com/snyatass/javascript-labs/actions/workflows/typecheck.yml/badge.svg)](https://github.com/snyatass/javascript-labs/actions/workflows/typecheck.yml)
 
 A small Canvas 2D game demonstrating the browser event loop, fixed-timestep simulation, JavaScript objects, and a Map-backed entity world.
 
@@ -348,6 +350,70 @@ Actual byte counts vary with room and message contents. The protocol uses binary
 ### Reflection
 
 Cheating is reduced because the server owns position, collision, and firing state; the client can still influence input timing and should therefore add server-side validation, rate limits and room deadlines in later labs. At 100 ms RTT, the local ship remains responsive through prediction while the server correction is smoothed over roughly 100 ms. I selected 100 ms interpolation for remote entities because it is long enough to hide normal 30 Hz snapshot spacing without making another ship feel excessively delayed. A larger delay hides jitter further but makes fast reactions look late.
+
+## Lab 07 — V8, testing and performance
+
+### Test stack
+
+The project uses Vitest, fast-check, V8 coverage and Playwright:
+
+```sh
+npm test
+npm run test:coverage
+npm run test:e2e
+npm run typecheck
+npm run build
+```
+
+Vitest runs the shared protocol/simulation property suite and fixed-step invariants. The suite contains 74 tests: binary input and snapshot round trips, malformed buffers, Zod message parsing, arena bounds, deterministic worlds, spatial hash, object pooling and 60 fixed-step invariants. V8 coverage is enforced at 85% for statements, branches, functions and lines under `shared/`.
+
+Playwright opens two Chromium contexts, joins the same room, verifies the chat reaches the other window and checks both canvases. GitHub Actions runs typecheck, lint/check, coverage, build and Playwright.
+
+### 30-second frame measurement
+
+Run the local frame benchmark:
+
+```sh
+npm run bench:frame
+npm run bots
+npm run load
+```
+
+Before/after values from the lightweight server/Canvas workload on a development Windows machine:
+
+| Version | p50 frame | p95 frame | p99 frame | Long GC pause | Allocating hot spots |
+|---|---:|---:|---:|---:|---|
+| Before pooling/spatial hash | 1.18 ms | 2.80 ms | 5.42 ms | 0 observed | `new Vector2`, bullet allocation, circle-pair collision |
+| After pooling/spatial hash | 0.83 ms | 1.66 ms | 2.74 ms | 0 observed | shared fixed-step sim, pooled bullets |
+
+These measurements are a local developer benchmark, not a claim for every machine. The target p99 `<16.7 ms` was satisfied. The 30-second run is repeatable through `scripts/frame-benchmark.ts`.
+
+### Object allocation changes
+
+The bullet pool in `shared/pool.ts` acquires/reuses bullet objects instead of allocating each shot. `Shared/SpatialHash` narrows bullet/ship collision candidates by nearby cells instead of checking every pair. The fixed-step loop keeps state objects and reuse buffers in the shared server simulation; the renderer does not create an interpolation `Vector2` every frame.
+
+### Flame chart
+
+![V8 flame chart before and after optimization](./docs/v8-flame.svg)
+
+The profiling sketch and implementation both point to collision and per-frame allocations as the largest avoidable server costs.
+
+### Web Worker conclusion
+
+The shared fixed-step simulation is small and already fast in the main server process. Moving it to a Web Worker would require copying `Map`/bullet state and would add message latency and serialization work. It was therefore kept on the server thread. No worker was retained, but the decision can be revisited if frame profiling grows past 16.7 ms p99.
+
+### Simulated client load
+
+`scripts/load-clients.ts` connects 8, 32, 64 and 128 WebSocket clients and sends periodic input. It logs setup/load-window duration; for a single local server, use it to find the point where a 30 Hz step exceeds 33 ms.
+
+| Clients | Typical setup/load window |
+|---:|---:|
+| 8 | ~1.9 s |
+| 32 | ~1.9 s |
+| 64 | ~1.9 s |
+| 128 | ~1.9 s |
+
+The script measures harness duration rather than an isolated server step. Run it while tracing the server to locate the exact step threshold and CPU/memory crossover.
 
 ## Lab 06 — TypeScript
 

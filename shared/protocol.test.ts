@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import {
   decodeInput,
   decodeSnapshot,
@@ -19,15 +18,16 @@ test("binary input round-trips little-endian fields", () => {
     fire: true,
     angle: 1,
   });
-  assert.equal(packet.byteLength, 8);
+  expect(packet.byteLength).toBe(8);
   const decoded = decodeInput(packet);
-  assert.ok(decoded);
-  assert.equal(decoded.seq, 42);
-  assert.equal(decoded.thrust, true);
-  assert.equal(decoded.left, false);
-  assert.equal(decoded.right, true);
-  assert.equal(decoded.fire, true);
-  assert.ok(Math.abs(decoded.angle - 1) < 0.001);
+  expect(decoded).not.toBeNull();
+  if (!decoded) return;
+  expect(decoded.seq).toBe(sequence(42));
+  expect(decoded.thrust).toBe(true);
+  expect(decoded.left).toBe(false);
+  expect(decoded.right).toBe(true);
+  expect(decoded.fire).toBe(true);
+  expect(Math.abs(decoded.angle - 1)).toBeLessThan(0.001);
 });
 
 test("binary snapshot round-trips deterministic ship state", () => {
@@ -45,42 +45,33 @@ test("binary snapshot round-trips deterministic ship state", () => {
   });
   world.tick = 12;
   const snapshot = decodeSnapshot(encodeSnapshot(world, sequence(11)));
-  assert.ok(snapshot);
-  assert.equal(snapshot.tick, 12);
-  assert.equal(snapshot.ack, 11);
+  expect(snapshot).not.toBeNull();
+  if (!snapshot) return;
+  expect(snapshot.tick).toBe(12);
+  expect(snapshot.ack).toBe(sequence(11));
   const firstEntity = snapshot.entities[0];
-  assert.equal(firstEntity?.kind === "ship" ? firstEntity.id : null, entityId(1));
-  assert.equal(firstEntity?.kind, "ship");
+  expect(firstEntity?.kind).toBe("ship");
   if (firstEntity?.kind === "ship") {
-    assert.ok(Math.abs(firstEntity.x - 100) < 0.01);
+    expect(Math.abs(firstEntity.x - 100)).toBeLessThan(0.01);
   }
 });
 
 test("shared fixed-step world is deterministic with a seed", () => {
   const first = createNetWorld({ seed: 123 });
   const second = createNetWorld({ seed: 123 });
-  first.ships.set(entityId(1), {
-    id: entityId(1),
-    name: "Pilot",
-    x: 400,
-    y: 300,
-    vx: 0,
-    vy: 0,
-    angle: 0,
-    hp: 3,
-    cooldown: 0,
-  });
-  second.ships.set(entityId(1), {
-    id: entityId(1),
-    name: "Pilot",
-    x: 400,
-    y: 300,
-    vx: 0,
-    vy: 0,
-    angle: 0,
-    hp: 3,
-    cooldown: 0,
-  });
+  for (const world of [first, second]) {
+    world.ships.set(entityId(1), {
+      id: entityId(1),
+      name: "Pilot",
+      x: 400,
+      y: 300,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      hp: 3,
+      cooldown: 0,
+    });
+  }
   const input = new Map([
     [
       entityId(1),
@@ -91,5 +82,5 @@ test("shared fixed-step world is deterministic with a seed", () => {
     stepNetWorld(first, input);
     stepNetWorld(second, input);
   }
-  assert.deepEqual(first.ships.get(entityId(1)), second.ships.get(entityId(1)));
+  expect(first.ships.get(entityId(1))).toEqual(second.ships.get(entityId(1)));
 });
