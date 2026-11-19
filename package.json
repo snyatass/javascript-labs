@@ -11,11 +11,12 @@
     "dev:server": "npm run dev -w server",
     "build": "npm run build -w client",
     "start": "npm run start -w server",
-    "test": "node --test client/tests",
+    "test": "node --test client/tests shared/*.test.js",
     "check": "biome check client/src client/tests server/src server/tests client/vite.config.js"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",
+    "gifenc": "^1.0.3",
     "vite": "^8.3.8"
   }
 }

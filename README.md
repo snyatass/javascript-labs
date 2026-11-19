@@ -293,12 +293,12 @@ Match events are transformed into NDJSON and written with a pipeline to `LOG_DIR
 For a large NDJSON log through a deliberately slow response socket, observe Node RSS during download:
 
 | Download progress | RSS (MiB) |
-|---|---:|
-| 0% | 42 |
-| 25% | 44 |
-| 50% | 44 |
-| 75% | 45 |
-| 100% | 45 |
+| ----------------- | --------: |
+| 0%                |        42 |
+| 25%               |        44 |
+| 50%               |        44 |
+| 75%               |        45 |
+| 100%              |        45 |
 
 The curve stayed nearly flat because `createReadStream -> replay response` backpressure pauses reads when the network or response buffer cannot accept more data. Do not use `readFile` for replay: it copies the whole file into memory and increases RSS with file size.
 
@@ -307,3 +307,44 @@ The curve stayed nearly flat because `createReadStream -> replay response` backp
 A synchronous 300 ms HTTP handler blocks libuv callbacks and JavaScript timers on the same main thread until it returns. Health checks, WebSocket callbacks, pings, and other timers cannot run during that interval; the process may appear frozen even though OS sockets have more data ready.
 
 An EventEmitter's `"error"` event is special. Without an `error` listener, `emit("error")` throws from the emitter call stack. If it is not caught by a surrounding boundary, uncaught exception termination exits the Node process. Therefore the WebSocket/stream setup has explicit error listeners and shutdown/logging boundaries.
+
+## Lab 05 — realtime networking
+
+### Server authority
+
+The client sends only input with a sequence number: thrust, left/right turn and fire. Coordinates are never accepted from the browser. `shared/sim.js` contains the fixed 1/30-second simulation used identically by Node and browser. It uses a seeded PRNG and contains no DOM, Node, `Math.random()` state, or `Date.now()` state. The server advances rooms with a target-time `setTimeout` loop and broadcasts snapshots at 30 Hz.
+
+Binary packets use a version byte and little-endian `DataView` fields. Input is 8 bytes: version, `uint32 seq`, flags and `Int16 angle`. Snapshots contain version, tick, acknowledged sequence, server time and ship/bullet records. `?protocol=json` switches the same messages to JSON for comparison.
+
+### Prediction and reconciliation
+
+The local ship runs immediately by replaying shared fixed-step physics. Each snapshot is applied as the server state and all inputs newer than `snapshot.ack` are replayed. Corrections are represented in the netgraph and remote ships use the 100 ms interpolation window. Bullets are visible from the shared client simulation and corrected by server snapshots.
+
+Artificial network conditions:
+
+```text
+http://localhost:5173/?latency=100&jitter=30&loss=0.05
+```
+
+The `latency`, `jitter`, and `loss` parameters delay/loss packets and are intended for two-window testing.
+
+### Two-window demo
+
+![Two browser windows with server-authoritative realtime movement](./docs/lab05-realtime.gif)
+
+Open the same URL in two browser windows, join the same room and hold movement/fire keys in both windows.
+
+### JSON vs binary
+
+| Format          | Typical input size |            Typical snapshot size | Main tradeoff                        |
+| --------------- | -----------------: | -------------------------------: | ------------------------------------ |
+| JSON input      |       ~45–65 bytes |                              N/A | Easier to debug, object/key overhead |
+| JSON snapshot   |                N/A |                   ~250–900 bytes | Easy browser/terminal inspection     |
+| Binary input    |            8 bytes |                              N/A | Small, fixed-size, versioned         |
+| Binary snapshot |                N/A | ~35 bytes/ship + 18 bytes/bullet | Compact and predictable              |
+
+Actual byte counts vary with room and message contents. The protocol uses binary by default and JSON by `?protocol=json`.
+
+### Reflection
+
+Cheating is reduced because the server owns position, collision, and firing state; the client can still influence input timing and should therefore add server-side validation, rate limits and room deadlines in later labs. At 100 ms RTT, the local ship remains responsive through prediction while the server correction is smoothed over roughly 100 ms. I selected 100 ms interpolation for remote entities because it is long enough to hide normal 30 Hz snapshot spacing without making another ship feel excessively delayed. A larger delay hides jitter further but makes fast reactions look late.

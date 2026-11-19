@@ -6,6 +6,7 @@ import { createInput } from "./input.js";
 import { Lobby } from "./lobby.js";
 import { setupLobby } from "./lobby-dom.js";
 import { createLoop } from "./loop.js";
+import { RealtimeClient } from "./realtime.js";
 import { setupCanvas } from "./render/canvas.js";
 import { drawEntity, drawGrid, drawHud } from "./render/draw.js";
 import { Game } from "./sim/game.js";
@@ -24,6 +25,7 @@ let loop = null;
 let sprites = null;
 let assetsReady = false;
 let chatSocket = null;
+let realtime = null;
 
 function drawLoading(progress, message) {
   ctx.clearRect(0, 0, size.width, size.height);
@@ -120,25 +122,32 @@ lobby.addEventListener("joined", async (event) => {
   chatSocket = new ResilientSocket(
     `${location.protocol === "https:" ? "wss://" : "ws://"}${location.host}/ws`,
   );
+  realtime = new RealtimeClient(chatSocket, room);
   chatSocket.connect();
   chatSocket.addEventListener("open", () => {
-    chatSocket.send({ type: "join", roomId: room.id, name: event.detail.playerName });
+    chatSocket.send({
+      type: "join",
+      roomId: room.id,
+      name: event.detail.playerName,
+      protocol: new URLSearchParams(location.search).get("protocol") === "json" ? "json" : "binary",
+    });
   });
   chatSocket.addEventListener("message", (socketEvent) => {
     const message = socketEvent.detail;
-    if (message.type === "joined") game.message = `Joined ${message.room.name}`;
+    if (message instanceof ArrayBuffer) {
+      realtime.handleSocketMessage(message);
+    } else if (message?.type === "snapshot") {
+      realtime.handleSocketMessage(message);
+    } else if (message.type === "joined") {
+      realtime.join(message.playerId);
+      game.message = `Joined ${message.room.name}`;
+    }
   });
   setupChat(chatSocket);
 
-  window.addEventListener("keydown", (keyEvent) => {
-    if (keyEvent.code !== "Space" || keyEvent.repeat) return;
-    keyEvent.preventDefault();
-    const bullet = game.player?.fire(game.world, { homing: keyEvent.shiftKey });
-    if (bullet) emitGameEvent("fired", { homing: keyEvent.shiftKey });
-  });
-
-  function simulate(dt) {
-    game.step(dt, input);
+  function simulate(_dt) {
+    realtime.updateMetrics();
+    realtime.sampleInput(input);
     for (const gameEvent of game.events) {
       if (gameEvent.type === "entity-hit") emitGameEvent("hit", gameEvent);
       if (gameEvent.type === "entity-destroyed") emitGameEvent("exploded", gameEvent);
@@ -160,8 +169,35 @@ lobby.addEventListener("joined", async (event) => {
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
     drawGrid(ctx, bounds.width, bounds.height);
-    for (const entity of game.world) {
-      drawEntity(ctx, entity, alpha, bounds.width, bounds.height, sprites);
+    if (realtime.localId) {
+      for (const ship of realtime.world.ships.values()) {
+        const rendered = realtime.getInterpolatedShip(ship.id, performance.now());
+        if (!rendered) continue;
+        ctx.save();
+        ctx.translate(rendered.x, rendered.y);
+        ctx.rotate(rendered.angle);
+        ctx.beginPath();
+        ctx.moveTo(18, 0);
+        ctx.lineTo(-14, -11);
+        ctx.lineTo(-9, 0);
+        ctx.lineTo(-14, 11);
+        ctx.closePath();
+        ctx.fillStyle = rendered.id === realtime.localId ? "#4cc9f0" : "#ff5d73";
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+        ctx.restore();
+      }
+      for (const bullet of realtime.world.bullets) {
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffe66d";
+        ctx.fill();
+      }
+    } else {
+      for (const entity of game.world) {
+        drawEntity(ctx, entity, alpha, bounds.width, bounds.height, sprites);
+      }
     }
     ctx.restore();
 
@@ -171,6 +207,18 @@ lobby.addEventListener("joined", async (event) => {
       respawnRemaining: game.respawnRemaining,
       message: `${event.detail.playerName} • ${room.name}`,
     });
+
+    ctx.save();
+    ctx.fillStyle = "rgba(11,14,20,0.82)";
+    ctx.fillRect(size.width - 230, 12, 218, 114);
+    ctx.fillStyle = "#e2e8f0";
+    ctx.font = "12px monospace";
+    ctx.fillText(`RTT: ${realtime.rtt.toFixed(1)} ms`, size.width - 218, 34);
+    ctx.fillText(`snapshot: ${realtime.snapshotAge.toFixed(1)} ms`, size.width - 218, 54);
+    ctx.fillText(`bytes/s: ${realtime.bytesPerSec}`, size.width - 218, 74);
+    ctx.fillText(`input queue: ${realtime.pending.length}`, size.width - 218, 94);
+    ctx.fillText(`correction: ${realtime.correction.toFixed(1)} px`, size.width - 218, 114);
+    ctx.restore();
   }
 
   loop = createLoop({ step: 1 / 60, simulate, render });

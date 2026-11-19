@@ -2,6 +2,8 @@ import { createReadStream, stat } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { WebSocketServer } from "ws";
+import { decodeInput, encodeSnapshot } from "../../shared/protocol.js";
+import { addNetShip, createNetWorld, removeNetShip, stepNetWorld } from "../../shared/sim.js";
 import { loadConfig } from "./config.js";
 import { MatchLog } from "./match-log.js";
 import { Room } from "./room.js";
@@ -13,6 +15,9 @@ const rooms = new Map([
   ["small-orbit", new Room({ id: "small-orbit", name: "Small Orbit", width: 640, height: 480 })],
 ]);
 const logs = new Map();
+const realtimeWorlds = new Map();
+const realtimeInputs = new Map();
+const realtimeTimers = new Map();
 
 function json(response, status, value) {
   response.statusCode = status;
@@ -129,6 +134,21 @@ wss.on("connection", (socket) => {
   });
 
   socket.on("message", async (data) => {
+    if (typeof data !== "string" && data.byteLength >= 8) {
+      const bytes =
+        data instanceof ArrayBuffer
+          ? data
+          : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+      const input = decodeInput(bytes);
+      if (input) {
+        if (!socket.playerId || !socket.roomId) return socket.close(1008, "Join first");
+        const inputs = realtimeInputs.get(socket.roomId);
+        if (inputs) inputs.set(socket.playerId, { ...input, seq: input.seq });
+        socket.inputAck = Math.max(socket.inputAck ?? 0, input.seq);
+        return;
+      }
+    }
+
     if (data.byteLength > 16 * 1024) {
       socket.close(1009, "Message too large");
       return;
@@ -160,6 +180,7 @@ wss.on("connection", (socket) => {
       const name = typeof message.name === "string" ? message.name.trim().slice(0, 24) : "";
       if (!room || !name) return socket.close(1008, "Invalid join");
       clearTimeout(socket.joinTimer);
+      socket.protocolMode = message.protocol === "json" ? "json" : "binary";
       if (!logs.has(room.id)) {
         const match = new MatchLog(config.logDir);
         try {
@@ -178,7 +199,38 @@ wss.on("connection", (socket) => {
         logs.set(room.id, match);
       }
       room.add(socket, name);
-      socket.send(JSON.stringify({ type: "joined", room: room.snapshot(), name }));
+      let playerId = 1;
+      while ([...(realtimeWorlds.get(room.id)?.ships.keys() ?? [])].includes(playerId)) playerId++;
+      socket.playerId = playerId;
+      socket.inputAck = 0;
+
+      let world = realtimeWorlds.get(room.id);
+      if (!world) {
+        world = createNetWorld({ width: room.width, height: room.height, seed: 0x1ab5 });
+        realtimeWorlds.set(room.id, world);
+        realtimeInputs.set(room.id, new Map());
+      }
+      addNetShip(world, playerId, name);
+      startRealtimeRoom(room);
+      socket.send(
+        JSON.stringify({ type: "joined", room: room.snapshot(), name, playerId }),
+      );
+      return;
+    }
+
+    if (message.type === "input") {
+      if (!socket.playerId || !socket.roomId) return socket.close(1008, "Join first");
+      const inputs = realtimeInputs.get(socket.roomId);
+      if (inputs && Number.isInteger(message.seq)) {
+        inputs.set(socket.playerId, {
+          seq: message.seq,
+          thrust: Boolean(message.thrust),
+          left: Boolean(message.left),
+          right: Boolean(message.right),
+          fire: Boolean(message.fire),
+        });
+        socket.inputAck = Math.max(socket.inputAck ?? 0, message.seq);
+      }
       return;
     }
 
@@ -199,14 +251,80 @@ wss.on("connection", (socket) => {
   socket.on("close", () => {
     clearTimeout(socket.joinTimer);
     if (!socket.roomId) return;
-    const room = rooms.get(socket.roomId);
+    const roomId = socket.roomId;
+    const room = rooms.get(roomId);
     room?.remove(socket);
+    const world = realtimeWorlds.get(roomId);
+    if (world && socket.playerId) {
+      removeNetShip(world, socket.playerId);
+      realtimeInputs.get(roomId)?.delete(socket.playerId);
+    }
     if (room?.players === 0) {
+      stopRealtimeRoom(roomId);
+      realtimeWorlds.delete(roomId);
+      realtimeInputs.delete(roomId);
       void logs.get(room.id)?.close();
       rooms.delete(room.id);
     }
   });
 });
+
+function startRealtimeRoom(room) {
+  if (realtimeTimers.has(room.id)) return;
+  let previous = 0;
+  function tick(now) {
+    const world = realtimeWorlds.get(room.id);
+    if (!world) return;
+    if (previous === 0) previous = now;
+    let elapsed = Math.min(now - previous, 250);
+    previous = now;
+    const inputs = realtimeInputs.get(room.id);
+    const dt = 1 / 30;
+    while (elapsed >= dt * 1000) {
+      stepNetWorld(world, inputs, dt);
+      elapsed -= dt * 1000;
+    }
+
+    for (const socket of wss.clients) {
+      if (socket.roomId !== room.id) continue;
+      if (socket.protocolMode === "json") {
+        const ships = [...world.ships.values()].map((ship) => ({
+          id: ship.id,
+          x: ship.x,
+          y: ship.y,
+          angle: ship.angle,
+          vx: ship.vx,
+          vy: ship.vy,
+          hp: ship.hp,
+        }));
+        socket.send(
+          JSON.stringify({
+            type: "snapshot",
+            tick: world.tick,
+            ack: socket.inputAck ?? 0,
+            ships,
+            bullets: world.bullets,
+          }),
+        );
+      } else {
+        socket.send(encodeSnapshot(world, socket.inputAck ?? 0), { binary: true });
+      }
+    }
+    realtimeTimers.set(
+      room.id,
+      setTimeout(() => tick(performance.now()), Math.max(1, 1000 / 30)),
+    );
+  }
+  realtimeTimers.set(
+    room.id,
+    setTimeout(() => tick(performance.now()), 1000 / 30),
+  );
+}
+
+function stopRealtimeRoom(roomId) {
+  clearTimeout(realtimeTimers.get(roomId));
+  realtimeTimers.delete(roomId);
+}
 
 const pingTimer = setInterval(() => {
   for (const socket of wss.clients) {

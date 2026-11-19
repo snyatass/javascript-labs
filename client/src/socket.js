@@ -19,6 +19,7 @@ export class ResilientSocket extends EventTarget {
   #open() {
     if (this.#closed) return;
     this.#socket = new WebSocket(this.#url);
+    this.#socket.binaryType = "arraybuffer";
 
     this.#socket.addEventListener("open", () => {
       this.#attempt = 0;
@@ -27,6 +28,10 @@ export class ResilientSocket extends EventTarget {
     });
 
     this.#socket.addEventListener("message", (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        this.dispatchEvent(new CustomEvent("message", { detail: event.data }));
+        return;
+      }
       try {
         const message = JSON.parse(event.data);
         this.dispatchEvent(new CustomEvent("message", { detail: message }));
@@ -52,6 +57,10 @@ export class ResilientSocket extends EventTarget {
 
   send(message) {
     if (this.#socket?.readyState === WebSocket.OPEN) {
+      if (message instanceof ArrayBuffer) {
+        if (this.#socket.bufferedAmount < 256 * 1024) this.#socket.send(message);
+        return;
+      }
       const payload = JSON.stringify(message);
       if (new TextEncoder().encode(payload).byteLength <= 16 * 1024) {
         if (this.#socket.bufferedAmount < 256 * 1024) this.#socket.send(payload);
