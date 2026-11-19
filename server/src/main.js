@@ -2,9 +2,10 @@ import { createReadStream, stat } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { WebSocketServer } from "ws";
-import { decodeInput, encodeSnapshot } from "../../shared/protocol.js";
-import { addNetShip, createNetWorld, removeNetShip, stepNetWorld } from "../../shared/sim.js";
-import { loadConfig } from "./config.js";
+import { parseClientMessage } from "../../shared/messages.ts";
+import { decodeInput, encodeSnapshot } from "../../shared/protocol.ts";
+import { addNetShip, createNetWorld, removeNetShip, stepNetWorld } from "../../shared/sim.ts";
+import { loadConfig } from "./config.ts";
 import { MatchLog } from "./match-log.js";
 import { Room } from "./room.js";
 
@@ -162,17 +163,24 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    let message;
+    let rawMessage;
     try {
-      message = JSON.parse(data.toString());
-    } catch {
+      rawMessage = JSON.parse(data.toString());
+    } catch (error) {
+      console.error(
+        "Invalid JSON message:",
+        error instanceof Error ? error.message : String(error),
+      );
       socket.close(1007, "Invalid JSON");
       return;
     }
-    if (!message || typeof message !== "object" || typeof message.type !== "string") {
+    const parsed = parseClientMessage(rawMessage);
+    if (!parsed.ok) {
+      console.error("Invalid client message:", parsed.error);
       socket.close(1007, "Invalid message");
       return;
     }
+    const message = parsed.value;
 
     if (message.type === "join") {
       if (socket.roomId) return socket.close(1008, "Already joined");
@@ -212,9 +220,7 @@ wss.on("connection", (socket) => {
       }
       addNetShip(world, playerId, name);
       startRealtimeRoom(room);
-      socket.send(
-        JSON.stringify({ type: "joined", room: room.snapshot(), name, playerId }),
-      );
+      socket.send(JSON.stringify({ type: "joined", room: room.snapshot(), name, playerId }));
       return;
     }
 

@@ -6,7 +6,7 @@ import { createInput } from "./input.js";
 import { Lobby } from "./lobby.js";
 import { setupLobby } from "./lobby-dom.js";
 import { createLoop } from "./loop.js";
-import { RealtimeClient } from "./realtime.js";
+import { RealtimeClient } from "./realtime.ts";
 import { setupCanvas } from "./render/canvas.js";
 import { drawEntity, drawGrid, drawHud } from "./render/draw.js";
 import { Game } from "./sim/game.js";

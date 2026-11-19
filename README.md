@@ -348,3 +348,27 @@ Actual byte counts vary with room and message contents. The protocol uses binary
 ### Reflection
 
 Cheating is reduced because the server owns position, collision, and firing state; the client can still influence input timing and should therefore add server-side validation, rate limits and room deadlines in later labs. At 100 ms RTT, the local ship remains responsive through prediction while the server correction is smoothed over roughly 100 ms. I selected 100 ms interpolation for remote entities because it is long enough to hide normal 30 Hz snapshot spacing without making another ship feel excessively delayed. A larger delay hides jitter further but makes fast reactions look late.
+
+## Lab 06 — TypeScript
+
+`shared/sim.ts` and `shared/protocol.ts` are strict TypeScript modules. Shared values use readonly vector/entity fields, `EntityId`, `Sequence`, and `Tick` branded types, and discriminated `kind: "ship" | "bullet"` snapshot entities. TypeScript catches mismatched IDs/sequences/ticks at compile time; binary and JSON data are still validated at runtime because erased types cannot protect network input.
+
+Client network messages and server room protocol use Zod schemas in `shared/messages.ts`. `parseClientMessage` accepts `unknown` and returns success/failure instead of throwing. Broken JSON is logged, then the socket is closed. Binary decoding separately validates version, packet length and numeric ranges.
+
+Three simple TypeScript ideas:
+
+1. **Structural typing:** an object is accepted because it has the required fields and methods, not necessarily a declared class name.
+2. **Union:** snapshot entities are `"ship" | "bullet"` objects, so code must handle every kind. Exhaustive `never` branches catch a new kind at compile time.
+3. **Generics:** helpers preserve a value's specific type while applying reusable behavior, such as `Map<EntityId, Ship>`.
+
+The canvas and event loop stay framework-free. A UI framework would add bundle size and state synchronization without improving Canvas or fixed-step networking, so no React/Vue/Svelte layer was added.
+
+Run strict validation:
+
+```sh
+npm run typecheck
+npm test
+npm run build
+```
+
+TypeScript found issues including object key mismatch, possible `null` decode results, snapshot field ambiguity and wrong branded ID/sequence usage. Runtime Zod and binary range checks remain necessary because network values arrive after compilation.

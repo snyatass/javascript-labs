@@ -3,11 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/main.js",
-    "start": "node src/main.js",
+    "dev": "tsx watch src/main.js",
+    "start": "tsx src/main.js",
     "test": "node --test"
   },
   "dependencies": {
     "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }

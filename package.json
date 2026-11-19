@@ -11,12 +11,18 @@
     "dev:server": "npm run dev -w server",
     "build": "npm run build -w client",
     "start": "npm run start -w server",
-    "test": "node --test client/tests shared/*.test.js",
-    "check": "biome check client/src client/tests server/src server/tests client/vite.config.js"
+    "test": "node --test client/tests shared/*.test.ts",
+    "typecheck": "tsc -b",
+    "check": "npm run typecheck && biome check client/src client/tests server/src server/tests shared/protocol.ts shared/sim.ts shared/messages.ts shared/protocol.test.ts client/vite.config.js"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",
+    "@types/node": "^26.6.6",
     "gifenc": "^1.0.3",
+    "typescript": "^7.0.2",
     "vite": "^8.3.8"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }
