@@ -37,5 +37,8 @@ export function setupLobby(lobby) {
     hide() {
       section.classList.add("hidden");
     },
+    show() {
+      section.classList.remove("hidden");
+    },
   };
 }

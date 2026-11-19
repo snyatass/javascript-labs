@@ -12,6 +12,10 @@ import { drawEntity, drawGrid, drawHud } from "./render/draw.js";
 import { Game } from "./sim/game.js";
 import { ResilientSocket } from "./socket.js";
 
+if ("serviceWorker" in navigator) {
+  void navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
 const canvas = document.getElementById("game");
 const { ctx, size } = setupCanvas(canvas);
 const input = createInput(window);
@@ -130,6 +134,14 @@ lobby.addEventListener("joined", async (event) => {
       roomId: room.id,
       name: event.detail.playerName,
       protocol: new URLSearchParams(location.search).get("protocol") === "json" ? "json" : "binary",
+    });
+    chatSocket.addEventListener("close", (socketEvent) => {
+      if (socketEvent.detail.code === 1001 || socketEvent.detail.code === 1012) {
+        loop?.stop();
+        lobbyUi.show();
+        lobbyUi.setStatus("Server disconnected. Choose a room to rejoin.");
+        lobbyUi.setReady(assetsReady);
+      }
     });
   });
   chatSocket.addEventListener("message", (socketEvent) => {

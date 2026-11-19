@@ -40,8 +40,10 @@ export class ResilientSocket extends EventTarget {
       }
     });
 
-    this.#socket.addEventListener("close", () => {
-      this.dispatchEvent(new Event("close"));
+    this.#socket.addEventListener("close", (event) => {
+      this.dispatchEvent(
+        new CustomEvent("close", { detail: { code: event.code, reason: event.reason } }),
+      );
       if (this.#closed) return;
       const delay = Math.min(10000, 250 * 2 ** this.#attempt);
       this.#attempt++;

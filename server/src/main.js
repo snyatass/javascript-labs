@@ -1,6 +1,8 @@
 import { createReadStream, stat } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import pino from "pino";
 import { WebSocketServer } from "ws";
 import { parseClientMessage } from "../../shared/messages.ts";
 import { decodeInput, encodeSnapshot } from "../../shared/protocol.ts";
@@ -10,6 +12,16 @@ import { MatchLog } from "./match-log.js";
 import { Room } from "./room.js";
 
 const config = loadConfig();
+const logger = pino({ level: process.env.LOG_LEVEL || "info" });
+let ready = true;
+let shuttingDown = false;
+let messagesPerSecond = 0;
+let bytesPerSecond = 0;
+let totalMessages = 0;
+let totalBytes = 0;
+let lastStepDuration = 0;
+let eventLoopBusy = 0;
+const ipConnections = new Map();
 const rooms = new Map([
   ["arena-alpha", new Room({ id: "arena-alpha", name: "Arena Alpha", width: 800, height: 600 })],
   ["arena-beta", new Room({ id: "arena-beta", name: "Arena Beta", width: 1000, height: 700 })],
@@ -63,7 +75,9 @@ async function serveStatic(request, response) {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
   if (request.method === "GET" && url.pathname === "/health") {
-    json(response, 200, { ok: true });
+    json(response, 200, { ok: true, gitSha: config.gitSha });
+  } else if (request.method === "GET" && url.pathname === "/ready") {
+    json(response, ready ? 200 : 503, { ready });
   } else if (request.method === "GET" && url.pathname === "/api/rooms") {
     json(
       response,
@@ -83,6 +97,8 @@ const server = createServer(async (request, response) => {
       const data = JSON.parse(body);
       const name = typeof data.name === "string" ? data.name.trim().slice(0, 40) : "";
       if (!name) return json(response, 400, { error: "Room name is required" });
+      if (rooms.size >= config.maxRooms)
+        return json(response, 503, { error: "Room limit reached" });
       const id = `room-${Date.now().toString(36)}`;
       const room = new Room({ id, name, width: 800, height: 600 });
       rooms.set(id, room);
@@ -90,6 +106,19 @@ const server = createServer(async (request, response) => {
     } catch {
       json(response, 400, { error: "Invalid JSON" });
     }
+  } else if (request.method === "GET" && url.pathname === "/metrics") {
+    const players = [...rooms.values()].reduce((sum, room) => sum + room.players, 0);
+    const memory = process.memoryUsage();
+    json(response, 200, {
+      rooms: rooms.size,
+      players,
+      messagesPerSecond,
+      bytesPerSecond,
+      stepTimeMs: lastStepDuration,
+      eventLoopBusyPercent: eventLoopBusy,
+      rssBytes: memory.rss,
+      heapUsedBytes: memory.heapUsed,
+    });
   } else if (
     request.method === "GET" &&
     url.pathname.startsWith("/api/matches/") &&
@@ -112,6 +141,26 @@ server.on("upgrade", (request, socket, head) => {
     socket.destroy();
     return;
   }
+  const origin = request.headers.origin;
+  if (origin && !config.allowedOrigins.includes(origin)) {
+    logger.warn({ event: "origin_rejected", origin }, "WebSocket origin rejected");
+    socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  const ip =
+    request.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ||
+    request.socket.remoteAddress ||
+    "unknown";
+  const count = ipConnections.get(ip) ?? 0;
+  if (count >= config.maxConnectionsPerIp) {
+    logger.warn({ event: "ip_limit", ip }, "IP connection limit reached");
+    socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  ipConnections.set(ip, count + 1);
+  socket.ipAddress = ip;
   wss.handleUpgrade(request, socket, head, (webSocket) =>
     wss.emit("connection", webSocket, request),
   );
@@ -135,6 +184,11 @@ wss.on("connection", (socket) => {
   });
 
   socket.on("message", async (data) => {
+    totalMessages++;
+    messagesPerSecond++;
+    const size = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
+    totalBytes += size;
+    bytesPerSecond += size;
     if (typeof data !== "string" && data.byteLength >= 8) {
       const bytes =
         data instanceof ArrayBuffer
@@ -187,6 +241,11 @@ wss.on("connection", (socket) => {
       const room = rooms.get(message.roomId);
       const name = typeof message.name === "string" ? message.name.trim().slice(0, 24) : "";
       if (!room || !name) return socket.close(1008, "Invalid join");
+      if (room.players >= config.maxPlayersPerRoom) {
+        logger.warn({ event: "room_full", roomId: room.id }, "Room player limit reached");
+        socket.close(1008, "Room full");
+        return;
+      }
       clearTimeout(socket.joinTimer);
       socket.protocolMode = message.protocol === "json" ? "json" : "binary";
       if (!logs.has(room.id)) {
@@ -220,6 +279,7 @@ wss.on("connection", (socket) => {
       }
       addNetShip(world, playerId, name);
       startRealtimeRoom(room);
+      logger.info({ event: "player_join", roomId: room.id, playerId, name }, "Player joined");
       socket.send(JSON.stringify({ type: "joined", room: room.snapshot(), name, playerId }));
       return;
     }
@@ -255,6 +315,11 @@ wss.on("connection", (socket) => {
   });
 
   socket.on("close", () => {
+    if (socket.ipAddress) {
+      const count = ipConnections.get(socket.ipAddress) ?? 1;
+      if (count <= 1) ipConnections.delete(socket.ipAddress);
+      else ipConnections.set(socket.ipAddress, count - 1);
+    }
     clearTimeout(socket.joinTimer);
     if (!socket.roomId) return;
     const roomId = socket.roomId;
@@ -264,6 +329,7 @@ wss.on("connection", (socket) => {
     if (world && socket.playerId) {
       removeNetShip(world, socket.playerId);
       realtimeInputs.get(roomId)?.delete(socket.playerId);
+      logger.info({ event: "player_leave", roomId, playerId: socket.playerId }, "Player left");
     }
     if (room?.players === 0) {
       stopRealtimeRoom(roomId);
@@ -281,6 +347,7 @@ function startRealtimeRoom(room) {
   function tick(now) {
     const world = realtimeWorlds.get(room.id);
     if (!world) return;
+    const stepStarted = performance.now();
     if (previous === 0) previous = now;
     let elapsed = Math.min(now - previous, 250);
     previous = now;
@@ -290,6 +357,7 @@ function startRealtimeRoom(room) {
       stepNetWorld(world, inputs, dt);
       elapsed -= dt * 1000;
     }
+    lastStepDuration = performance.now() - stepStarted;
 
     for (const socket of wss.clients) {
       if (socket.roomId !== room.id) continue;
@@ -332,6 +400,16 @@ function stopRealtimeRoom(roomId) {
   realtimeTimers.delete(roomId);
 }
 
+const eventLoopMonitor = monitorEventLoopDelay({ resolution: 10 });
+eventLoopMonitor.enable();
+const metricsTimer = setInterval(() => {
+  messagesPerSecond = totalMessages;
+  bytesPerSecond = totalBytes;
+  totalMessages = 0;
+  totalBytes = 0;
+  eventLoopBusy = Math.min(100, Number((eventLoopMonitor.percentile(99) / 100_000).toFixed(2)));
+}, 1000);
+
 const pingTimer = setInterval(() => {
   for (const socket of wss.clients) {
     if (socket.isAlive === false) {
@@ -347,18 +425,37 @@ const pingTimer = setInterval(() => {
 }, 15000);
 
 async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  ready = false;
   clearInterval(pingTimer);
+  clearInterval(metricsTimer);
+  eventLoopMonitor.disable();
+  setTimeout(() => process.exit(1), 10_000).unref();
+  logger.info({ event: "shutdown_started", signal }, "Server shutdown started");
   for (const socket of wss.clients) socket.close(1001, "Server shutdown");
   await Promise.all([...logs.values()].map((log) => log.close()));
-  wss.close();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
-  console.log(`Shutdown via ${signal}`);
+  await new Promise((resolve) => wss.close(resolve));
+  await new Promise((resolve) => server.close(resolve));
+  logger.info({ event: "shutdown_complete", signal }, "Server shutdown complete");
+  process.exit(0);
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
-server.listen(config.port, "127.0.0.1", () => {
-  console.log(`Server listening on http://127.0.0.1:${config.port}`);
+process.once("uncaughtException", (error) => {
+  logger.fatal({ event: "uncaught_exception", err: error }, "Uncaught exception");
+  void shutdown("uncaughtException");
+});
+process.once("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logger.fatal({ event: "unhandled_rejection", err: error }, "Unhandled rejection");
+  void shutdown("unhandledRejection");
+});
+
+setTimeout(() => {}, 10_000).unref();
+
+server.listen(config.port, config.host, () => {
+  logger.info({ event: "server_started", host: config.host, port: config.port }, "Server started");
 });

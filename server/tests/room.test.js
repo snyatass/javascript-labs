@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { loadConfig } from "../src/config.js";
+import { loadConfig } from "../src/config.ts";
 import { Room } from "../src/room.js";
 
 test("Room tracks joins, names, leaves, and emits empty lifecycle", () => {
@@ -36,6 +36,16 @@ test("Room broadcast skips closed sockets and high bufferedAmount", () => {
 
 test("config validates port and resolves environment directories", () => {
   assert.equal(loadConfig({ PORT: "3010", LOG_DIR: "custom-logs" }).port, 3010);
-  assert.throws(() => loadConfig({ PORT: "no" }), /positive integer/);
-  assert.throws(() => loadConfig({ PORT: "70000" }), /65535/);
+  assert.throws(() => loadConfig({ PORT: "no" }), /Invalid server config/);
+  assert.throws(() => loadConfig({ PORT: "70000" }), /Invalid server config/);
+  const config = loadConfig({
+    ALLOWED_ORIGINS: "https://game.example, https://www.game.example",
+    MAX_CONNECTIONS_PER_IP: "4",
+    MAX_ROOMS: "3",
+    MAX_PLAYERS_PER_ROOM: "16",
+  });
+  assert.deepEqual(config.allowedOrigins, ["https://game.example", "https://www.game.example"]);
+  assert.equal(config.maxConnectionsPerIp, 4);
+  assert.equal(config.maxRooms, 3);
+  assert.equal(config.maxPlayersPerRoom, 16);
 });

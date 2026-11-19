@@ -1,0 +1,14 @@
+services:
+  spaceship:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      LOG_DIR: /tmp/logs
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:5173}"
+      MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-8}"
+      MAX_ROOMS: "${MAX_ROOMS:-20}"
+      MAX_PLAYERS_PER_ROOM: "${MAX_PLAYERS_PER_ROOM:-32}"
+      GIT_SHA: "${GIT_SHA:-dev}"

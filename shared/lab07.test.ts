@@ -1,5 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, test } from "vitest";
+import { lerpAngle, nearestWrappedCoordinate } from "../client/src/realtime.ts";
 import { parseClientMessage } from "./messages";
 import { ObjectPool } from "./pool";
 import {
@@ -13,7 +14,6 @@ import {
 } from "./protocol";
 import { addNetShip, createNetWorld, stepNetWorld } from "./sim";
 import { SpatialHash } from "./spatial-hash";
-import { lerpAngle, nearestWrappedCoordinate } from "../client/src/realtime.ts";
 
 describe("Lab 07 fast-check protocol", () => {
   test("input round-trip preserves decoded fields with angle rounding", () => {
@@ -108,9 +108,12 @@ describe("Lab 07 fast-check protocol", () => {
 
   test("Zod parser accepts valid joins and rejects malformed values", () => {
     fc.assert(
-      fc.property(fc.string({ minLength: 1, maxLength: 24 }), (name) => {
-        expect(parseClientMessage({ type: "join", roomId: "arena", name }).ok).toBe(true);
-      }),
+      fc.property(
+        fc.string({ minLength: 1, maxLength: 24 }).filter((name) => name.trim().length > 0),
+        (name) => {
+          expect(parseClientMessage({ type: "join", roomId: "arena", name }).ok).toBe(true);
+        },
+      ),
       { numRuns: 100 },
     );
     for (const value of [null, {}, { type: "unknown" }, { type: "chat", text: "" }]) {

@@ -1,6 +1,6 @@
 # Spaceship — Labs 01–07
 
-[![CI](https://github.com/snyatass/javascript-labs/actions/workflows/typecheck.yml/badge.svg)](https://github.com/snyatass/javascript-labs/actions/workflows/typecheck.yml)
+[![CI](https://github.com/snyatass/javascript-labs/actions/workflows/ci.yml/badge.svg)](https://github.com/snyatass/javascript-labs/actions/workflows/ci.yml)
 
 A small Canvas 2D game demonstrating the browser event loop, fixed-timestep simulation, JavaScript objects, and a Map-backed entity world.
 
@@ -381,10 +381,10 @@ npm run load
 
 Before/after values from the lightweight server/Canvas workload on a development Windows machine:
 
-| Version | p50 frame | p95 frame | p99 frame | Long GC pause | Allocating hot spots |
-|---|---:|---:|---:|---:|---|
-| Before pooling/spatial hash | 1.18 ms | 2.80 ms | 5.42 ms | 0 observed | `new Vector2`, bullet allocation, circle-pair collision |
-| After pooling/spatial hash | 0.83 ms | 1.66 ms | 2.74 ms | 0 observed | shared fixed-step sim, pooled bullets |
+| Version                     | p50 frame | p95 frame | p99 frame | Long GC pause | Allocating hot spots                                    |
+| --------------------------- | --------: | --------: | --------: | ------------: | ------------------------------------------------------- |
+| Before pooling/spatial hash |   1.18 ms |   2.80 ms |   5.42 ms |    0 observed | `new Vector2`, bullet allocation, circle-pair collision |
+| After pooling/spatial hash  |   0.83 ms |   1.66 ms |   2.74 ms |    0 observed | shared fixed-step sim, pooled bullets                   |
 
 These measurements are a local developer benchmark, not a claim for every machine. The target p99 `<16.7 ms` was satisfied. The 30-second run is repeatable through `scripts/frame-benchmark.ts`.
 
@@ -407,11 +407,11 @@ The shared fixed-step simulation is small and already fast in the main server pr
 `scripts/load-clients.ts` connects 8, 32, 64 and 128 WebSocket clients and sends periodic input. It logs setup/load-window duration; for a single local server, use it to find the point where a 30 Hz step exceeds 33 ms.
 
 | Clients | Typical setup/load window |
-|---:|---:|
-| 8 | ~1.9 s |
-| 32 | ~1.9 s |
-| 64 | ~1.9 s |
-| 128 | ~1.9 s |
+| ------: | ------------------------: |
+|       8 |                    ~1.9 s |
+|      32 |                    ~1.9 s |
+|      64 |                    ~1.9 s |
+|     128 |                    ~1.9 s |
 
 The script measures harness duration rather than an isolated server step. Run it while tracing the server to locate the exact step threshold and CPU/memory crossover.
 
@@ -438,3 +438,43 @@ npm run build
 ```
 
 TypeScript found issues including object key mismatch, possible `null` decode results, snapshot field ambiguity and wrong branded ID/sequence usage. Runtime Zod and binary range checks remain necessary because network values arrive after compilation.
+
+## Lab 08 — Docker and live deployment
+
+The production image serves the Vite build and Node WebSocket server from one container. It uses a builder stage plus a non-root runtime stage, JSON/Pino logs, health/readiness endpoints and Docker `HEALTHCHECK`.
+
+```sh
+docker build --build-arg GIT_SHA=$(git rev-parse HEAD) -t spaceship:v1.0.0 .
+docker run --rm -p 3000:3000 \
+  -e ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 \
+  -e GIT_SHA=$(git rev-parse HEAD) spaceship:v1.0.0
+```
+
+Docker Compose:
+
+```sh
+docker compose up --build
+docker stop --time 10 <container-name>
+```
+
+Endpoints:
+
+| Endpoint     | Purpose                                                                 |
+| ------------ | ----------------------------------------------------------------------- |
+| `/health`    | Liveness and build SHA                                                  |
+| `/ready`     | Accepting players                                                       |
+| `/metrics`   | Rooms, players, messages, bytes, step time, event-loop delay and memory |
+| `/api/rooms` | Lobby room list                                                         |
+| `/ws`        | WebSocket; production proxy must expose it as `wss://`                  |
+
+`SIGTERM` marks the server unready, sends close code `1001`, closes WebSockets and HTTP listeners, and exits within the Docker stop timeout. Pino writes structured JSON logs. Origin is checked during the WebSocket upgrade; IP, room and player limits come from Zod configuration.
+
+### Live deployment and tags
+
+The `CI and GHCR` workflow runs tests, coverage, build and Playwright on pushes and pull requests. Tags matching `v*` build and publish `ghcr.io/snyatass/javascript-labs:<tag>` and `:latest`. A live public URL requires an external host, TLS and GHCR deployment credentials. In this local environment no hosting account or public WSS certificate is available, so this repository must not claim a live address that was not actually deployed. Configure the host to serve the container behind HTTPS and set `ALLOWED_ORIGINS` to its public origin.
+
+The PWA manifest and service worker allow install on a phone. Network resources and WebSocket traffic are not cached; the app shell is available offline for the reinstall/refresh fallback.
+
+### Remaining limits
+
+One Node process owns each room and its world snapshot. Scaling to multiple processes requires a shared room registry/pub-sub layer, so a room must stay on one process. The current limits are `MAX_CONNECTIONS_PER_IP=8`, `MAX_ROOMS=20`, and `MAX_PLAYERS_PER_ROOM=32`. Players disconnected by a server shutdown receive close code `1001` and return to lobby on reconnect. Malformed traffic is rate-limited and disconnected.
